@@ -11,7 +11,7 @@
 #define USER_AGENT          "Arduino-MKR-NB-1500"
 #define CONTENT_TYPE        "application/octet-stream"
 #define PRINT_HTTP_RESPONSE  false                      // When true, the HTTP response is printed to Serial Monitor.
-#define BAUD_RATE            115200
+#define BAUD_RATE            9600
 #define EOF_1                0xFF
 #define EOF_2                0xD9
 #define SAMPLE_RATE          16000

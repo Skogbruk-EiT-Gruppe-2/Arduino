@@ -1,4 +1,3 @@
-
 /*
   SSL Web client - POST BLOB
 
@@ -65,6 +64,88 @@ void setup() {
 
 
 /**
+ * Initializes the modem and logs status and numbers to the serial monitor.
+ */
+void initModem() {
+  Serial.begin(BAUD_RATE);
+
+  while (!Serial) {
+    ; 
+  }
+
+  if (!nbAccess.begin()) {
+    Serial.println("   x\tFailed to connect to the modem.");
+    exit(1);
+  }
+
+  Serial.println("Initializing Modem");
+  Serial.print("   ✓\tStatus code:\t\t");
+  Serial.println(PM->RCAUSE.reg, HEX);
+  Serial.print("   ✓\tGetting IMSI:\t\t");
+  getIMSI(IMSI, IMSI_LENGTH);
+  Serial.println(imsiString);
+  Serial.print("   ✓\tGenerating UUID:\t");
+  generateUUID(UUID);
+  setUUIDString();
+  Serial.println(uuidString);
+}
+
+
+
+/**
+ * Connects the SIM-card to the web.
+ */
+void connect() {
+  Serial.println("Starting Arduino web client");
+  boolean connected = false;
+
+  // Connect to the network
+  while (!connected) {
+    Serial.print("   ✓\tAttached GPRS:\t\t");
+    boolean gprs_ready = gprs.attachGPRS() == GPRS_READY;
+    String gprs_ok = gprs_ready ? "ready" : "failed";
+    Serial.println(gprs_ok);
+
+    Serial.print("   ✓\tAccessed SIM-card:\t\t");
+    boolean sim_ready = nbAccess.begin(PINNUMBER) == NB_READY;
+    String sim_ok = sim_ready ? "ready" : "failed";
+    Serial.println(sim_ok);
+
+    if (sim_ready && gprs_ready) {
+        connected = true;
+    } else {
+        Serial.println("   !\tNot connected, retrying...\n");
+        delay(1000);
+    }
+  }
+
+  Serial.println("   ✓\tConnected to network.");
+}
+
+
+
+/**
+ * Establishes connection with the FastAPI server.
+ */
+void connectBackend() {
+  Serial.println("Connecting to server");
+  if (client.connect(SERVER, S_PORT)) {
+    Serial.print("   ✓\tHost:\t\t");
+    Serial.println(SERVER_IP);
+    Serial.print("   ✓\tPort:\t\t");
+    Serial.print(S_PORT);
+    Serial.print("   ✓\tPath:\t\t");
+    Serial.print(SERVER_PATH);
+    Serial.println("   ✓\tConnected.");
+  } else {
+    Serial.println("   x\tConnection failed.");
+    exit(1);
+  }
+}
+
+
+
+/**
  * Splits the BLOB object into several packages numbered by a sequence number.
  * Sends these packages to the backend.
  */
@@ -99,97 +180,6 @@ void sendFile() {
   client.stop();
   Serial.println("   ✓\tDisconnected.");
   Serial.println("   ✓\tTerminated.");
-}
-
-
-
-/**
- * Connects the SIM-card to the web.
- */
-void connect() {
-  Serial.println("Starting Arduino web client");
-  boolean connected = false;
-
-  // Connect to the network
-  while (!connected) {
-      if ((nbAccess.begin(PINNUMBER) == NB_READY) &&
-          (gprs.attachGPRS() == GPRS_READY)) {
-          connected = true;
-      } else {
-          Serial.println("   !\tNot connected, retrying...");
-          delay(1000);
-      }
-  }
-
-  Serial.println("   ✓\tConnected to network!");
-}
-
-
-
-/**
- * Initializes the modem and logs status and numbers to the serial monitor.
- */
-void initModem() {
-  Serial.begin(BAUD_RATE);
-
-  while (!Serial) {
-    ; 
-  }
-
-  if (!nbAccess.begin()) {
-    Serial.println("   x\tFailed to connect to the modem!");
-    exit(1);
-  }
-
-  Serial.println("Initializing Modem");
-  Serial.print("   ✓\tStatus code:\t");
-  Serial.println(PM->RCAUSE.reg, HEX);
-  Serial.print("   ✓\tGetting IMSI:\t");
-  getIMSI(IMSI, IMSI_LENGTH);
-  Serial.println(imsiString);
-  Serial.print("   ✓\tGenerating UUID:\t");
-  generateUUID(UUID);
-  setUUIDString();
-  Serial.println(uuidString);
-}
-
-
-
-/**
- * Generates a random UUID for the file to send.
- */
-void generateUUID(uint8_t *uuid) {
-  for (int i = 0; i < 16; i++) {
-    uuid[i] = random(256);
-  }
-  uuid[6] = (uuid[6] & 0x0F) | 0x40;
-  uuid[8] = (uuid[8] & 0x3F) | 0x80;
-}
-
-
-
-/**
- * Retrieves the SIM-card's IMSI number from the modem.
- */
-void getIMSI(byte* imsi, int length) {
-  MODEM.send("AT+CIMI");  
-  MODEM.waitForResponse(1000, &imsiString);
-  imsiString.getBytes(imsi, length);
-}
-
-
-
-/**
- * Establishes connection with the FastAPI server.
- */
-void connectBackend() {
-  Serial.println("Connecting to server");
-  if (client.connect(SERVER, S_PORT)) {
-    Serial.println("   ✓\tConnected.");
-  } else {
-    Serial.println("   x\tConnection failed.");
-    exit(1);
-  }
 }
 
 
@@ -235,10 +225,6 @@ void sendBlob(uint8_t *data, size_t length, bool eof) {
 
   client.print("X-File-ID: ");
   client.println(uuidString);
-/*   for (int i = 0; i < sizeof(UUID); i++) {
-    client.print(UUID[i]);
-  }
-  client.println(); */
 
   client.print("X-IMSI: ");
   client.println(imsiString);
@@ -270,14 +256,39 @@ void sendBlob(uint8_t *data, size_t length, bool eof) {
  * Returns a conversion of the UUID uint8_t array to a String.
  */
 void setUUIDString() {
+  uuidString = ""; 
   for (int i = 0; i < sizeof(UUID); i++) {
-    uuidString += (UUID[i]);
+    char buffer[3]; 
+    sprintf(buffer, "%02X", UUID[i]); 
+    uuidString += buffer;
   }
+}
+
+
+
+/**
+ * Generates a random UUID for the file to send.
+ */
+void generateUUID(uint8_t *uuid) {
+  for (int i = 0; i < 16; i++) {
+    uuid[i] = random(256);
+  }
+  uuid[6] = (uuid[6] & 0x0F) | 0x40;
+  uuid[8] = (uuid[8] & 0x3F) | 0x80;
+}
+
+
+
+/**
+ * Retrieves the SIM-card's IMSI number from the modem.
+ */
+void getIMSI(byte* imsi, int length) {
+  MODEM.send("AT+CIMI");  
+  MODEM.waitForResponse(1000, &imsiString);
+  imsiString.getBytes(imsi, length);
 }
 
 
 
 // Not needed but must be declared.
 void loop() {}
-
-
