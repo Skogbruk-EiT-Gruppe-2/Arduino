@@ -1,100 +1,283 @@
-// libraries
+
+/*
+  SSL Web client - POST BLOB
+
+  This sketch connects to a website using SSL through a MKR NB 1500 board.
+  Instead of using GET, it sends a binary blob via HTTP POST.
+*/
+
+
+// Libraries
 #include <MKRNB.h>
+#include "NBModem.h"
+#include "Modem.h"
+#include "base64.hpp"
+#include "arduino_secrets.h" 
 
-// PIN Number
-const char PINNUMBER[]  = "";
 
-// initialize the library instance
-NBClient client;
-GPRS gprs;
+// PIN Number 
+const char PINNUMBER[] = SECRET_PINNUMBER;
+
+
+// Initialize the library instances
+NBSSLClient client;
+NBModem modem;
 NB nbAccess;
+GPRS gprs;
 
-// URL, path and port (for example: example.org)
-const char server[] = "129.241.153.67";  // Change this to your server
-const char path[] = "/upload-audio";         // Change this to your API endpoint
-const int port = 443; 
 
+// Server details
+const char SERVER[] = SERVER_IP;  
+const char PATH[]   = SERVER_PATH;         
+const int  S_PORT   = SERVER_PORT;                  
+
+
+// Sample binary data (BLOB)
+uint8_t blobData[42] = {
+  0x42, 0x4C, 0x4F, 0x42, 0x44, 0x41, 0x54, 0x41, 
+  0x10, 0x2A, 0x33, 0x45, 0x56, 0x67, 0x78, 0x89, 
+  0x90, 0xAB, 0xBC, 0xCD, 0xDE, 0xEF, 0xFA, 0x1B,
+  0x2C, 0x3D, 0x4E, 0x5F, 0x6A, 0x7B, 0x8C, 0x9D,
+  0xAE, 0xBF, 0xC0, 0xD1, 0xE2, 0xF3, 0x04, 0x15 
+  // EOF_1, EOF_2
+};  
+
+
+// Modem ID and unique file ID
+byte      IMSI[15];     // IMSI number of the SIM-card.
+uint8_t   UUID[16];     // UUID of the file.
+uint16_t  seq_num = 0;  // Sequence number of the BLOB partition.
+String    imsiString;   // IMSI number as a String.
+String    uuidString;   // UUID number as a String.
+
+
+
+/**
+ * Main function - Setup.
+ */
 void setup() {
-  // initialize serial communications and wait for port to open:
-  Serial.begin(9600);
-  while (!Serial) {
-    ; // wait for serial port to connect. Needed for native USB port only
+  initModem();
+  connect();
+  connectBackend();
+  sendFile();
+}
+
+
+
+/**
+ * Splits the BLOB object into several packages numbered by a sequence number.
+ * Sends these packages to the backend.
+ */
+void sendFile() {
+  int startIndex = seq_num * MAX_BLOB_SIZE;
+  int endIndex = min((seq_num + 1) * MAX_BLOB_SIZE, sizeof(blobData));
+  int counter = 0;
+  bool eof = false;
+
+  while (startIndex < sizeof(blobData)) {
+    uint8_t arr[endIndex - startIndex - 1];
+
+    for (int i = startIndex; i < endIndex; i++) {
+      arr[i-startIndex] = blobData[i];
+    }
+
+    if (seq_num * MAX_BLOB_SIZE >= sizeof(blobData)) {
+      eof = true;
+    }
+
+    sendBlob(arr, sizeof(arr), eof);
+
+    seq_num++;
+    startIndex = seq_num * MAX_BLOB_SIZE;
+    endIndex = min((seq_num + 1) * MAX_BLOB_SIZE, sizeof(blobData));
+    Serial.println("   ✓\tPackage " + String(counter) + " sent.");
   }
 
-  Serial.println("Starting Arduino web client.");
-  // connection state
+  Serial.println("   ✓\tAll packages sent");
+
+  Serial.println("\nDisconnecting.");
+  client.stop();
+  Serial.println("   ✓\tDisconnected.");
+  Serial.println("   ✓\tTerminated.");
+}
+
+
+
+/**
+ * Connects the SIM-card to the web.
+ */
+void connect() {
+  Serial.println("Starting Arduino web client");
   boolean connected = false;
 
-  // After starting the modem with NB.begin()
-  // attach to the GPRS network with the APN, login and password
+  // Connect to the network
   while (!connected) {
-    if ((nbAccess.begin(PINNUMBER) == NB_READY) &&
-        (gprs.attachGPRS() == GPRS_READY)) {
-      connected = true;
-    } else {
-      Serial.println("Not connected");
-      delay(1000);
-    }
+      if ((nbAccess.begin(PINNUMBER) == NB_READY) &&
+          (gprs.attachGPRS() == GPRS_READY)) {
+          connected = true;
+      } else {
+          Serial.println("   !\tNot connected, retrying...");
+          delay(1000);
+      }
   }
 
-  Serial.println("connecting...");
+  Serial.println("   ✓\tConnected to network!");
+}
 
-  auto resp = client.connect(server, port);
-  Serial.println(resp);
 
-  // if you get a connection, report back via serial:
-  if (resp) {
-        Serial.println("Connected, sending BLOB...");
 
-        // Send HTTP POST request
-        client.print("POST ");
-        client.print(path);
-        client.println(" HTTP/1.1");
+/**
+ * Initializes the modem and logs status and numbers to the serial monitor.
+ */
+void initModem() {
+  Serial.begin(BAUD_RATE);
 
-        // Use the actual host name instead of an IP if possible
-        client.print("Host: ");
-        client.println(server);  // Change to actual domain if available
+  while (!Serial) {
+    ; 
+  }
 
-        client.println("User-Agent: Arduino-MKR-NB-1500");
-        client.println("Accept: */*");
-        client.println("Connection: close");
-        client.println("Content-Type: application/octet-stream");
+  if (!nbAccess.begin()) {
+    Serial.println("   x\tFailed to connect to the modem!");
+    exit(1);
+  }
 
-        uint8_t data[] = {0x42, 0x4C, 0x4F, 0x42, 0x44, 0x41, 0x54, 0x41};
+  Serial.println("Initializing Modem");
+  Serial.print("   ✓\tStatus code:\t");
+  Serial.println(PM->RCAUSE.reg, HEX);
+  Serial.print("   ✓\tGetting IMSI:\t");
+  getIMSI(IMSI, IMSI_LENGTH);
+  Serial.println(imsiString);
+  Serial.print("   ✓\tGenerating UUID:\t");
+  generateUUID(UUID);
+  setUUIDString();
+  Serial.println(uuidString);
+}
 
-        // Send Content-Length properly
-        client.print("Content-Length: ");
-        client.println(sizeof(data));
 
-        // **Critical Fix**: Ensure there is a double newline to separate headers and body
-        client.println();
 
-        // Send binary data
-        client.write(data, sizeof(data));
+/**
+ * Generates a random UUID for the file to send.
+ */
+void generateUUID(uint8_t *uuid) {
+  for (int i = 0; i < 16; i++) {
+    uuid[i] = random(256);
+  }
+  uuid[6] = (uuid[6] & 0x0F) | 0x40;
+  uuid[8] = (uuid[8] & 0x3F) | 0x80;
+}
 
-        // **Ensure proper termination**
-        client.println();
+
+
+/**
+ * Retrieves the SIM-card's IMSI number from the modem.
+ */
+void getIMSI(byte* imsi, int length) {
+  MODEM.send("AT+CIMI");  
+  MODEM.waitForResponse(1000, &imsiString);
+  imsiString.getBytes(imsi, length);
+}
+
+
+
+/**
+ * Establishes connection with the FastAPI server.
+ */
+void connectBackend() {
+  Serial.println("Connecting to server");
+  if (client.connect(SERVER, S_PORT)) {
+    Serial.println("   ✓\tConnected.");
   } else {
-    // if you didn't get a connection to the server:
-    Serial.println("connection failed");
+    Serial.println("   x\tConnection failed.");
+    exit(1);
   }
 }
 
-void loop() {
-  // if there are incoming bytes available
-  // from the server, read them and print them:
-  if (client.available()) {
-    Serial.print((char)client.read());
+
+
+/**
+ * Sends BLOB data to the server through HTTP POST at the given endpoint.
+ * @param data    BLOB data to send.
+ * @param length  Length of the data.
+ */
+void sendBlob(uint8_t *data, size_t length, bool eof) {
+  // Send HTTP POST request
+  client.print("POST ");
+  client.print(PATH);
+  client.println(" HTTP/1.1");
+
+  // Request headers
+  client.print("Host: ");
+  client.println(SERVER);  
+
+  client.print("User-Agent: ");
+  client.println(USER_AGENT);
+
+  client.println("Accept: */*");
+  client.println("Connection: close");
+
+  client.print("Content-Type: ");
+  client.println(CONTENT_TYPE);
+
+  client.print("Content-Length: ");
+  client.println(length);
+
+  client.print("X-Sample-Rate: ");
+  client.println(SAMPLE_RATE);
+
+  client.print("X-Bits-Per-Sample: ");
+  client.println(BITS_PER_SAMPLE);
+
+  client.print("X-End-Of-File: ");
+  client.println(eof);
+
+  client.print("X-Sequence-Number: ");
+  client.println(seq_num);
+
+  client.print("X-File-ID: ");
+  client.println(uuidString);
+/*   for (int i = 0; i < sizeof(UUID); i++) {
+    client.print(UUID[i]);
   }
+  client.println(); */
 
-  // if the server's disconnected, stop the client:
-  if (!client.available() && !client.connected()) {
-    Serial.println();
-    Serial.println("disconnecting.");
-    client.stop();
+  client.print("X-IMSI: ");
+  client.println(imsiString);
 
-    // do nothing forevermore:
-    for (;;)
-      ;
+  client.println();
+
+  // Request body
+  client.beginWrite();
+  client.write(data, length);
+  client.endWrite();
+
+  // **Ensure proper termination**
+  client.println();
+
+
+  // Read the response from the server.
+  if ( PRINT_HTTP_RESPONSE ) {
+    Serial.println("Receiving response");
+    while (client.available()) {
+        char c = client.read();
+        Serial.print(c); 
+    } 
   }
 }
+
+
+
+/**
+ * Returns a conversion of the UUID uint8_t array to a String.
+ */
+void setUUIDString() {
+  for (int i = 0; i < sizeof(UUID); i++) {
+    uuidString += (UUID[i]);
+  }
+}
+
+
+
+// Not needed but must be declared.
+void loop() {}
+
+
