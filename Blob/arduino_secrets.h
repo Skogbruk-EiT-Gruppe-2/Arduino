@@ -1,5 +1,5 @@
 // SIM-CARD
-#define SECRET_PINNUMBER     "1111"
+#define SECRET_PINNUMBER     ""
 
 // Server
 #define SERVER_IP   "129.241.153.67"
