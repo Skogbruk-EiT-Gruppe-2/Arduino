@@ -1,7 +1,7 @@
 #include <I2S.h>
 
 #define SAMPLE_RATE 16000   // 16 kHz
-#define RECORDING_TIME 5    // 5 seconds
+#define RECORDING_TIME 50    // 5 seconds
 #define TOTAL_SAMPLES (SAMPLE_RATE * RECORDING_TIME)
 
 void setup() {
@@ -21,7 +21,8 @@ void loop() {
   for (int i = 0; i < TOTAL_SAMPLES; i++) {
     int sample = I2S.read();
     if (sample) {
-      Serial.println(sample);
+      Serial.print(sample);
+      Serial.print(",");
     }
   }
 
