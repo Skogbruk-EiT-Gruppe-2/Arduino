@@ -67,6 +67,8 @@ void loop() {
     for (int i = 0; i < TOTAL_SAMPLES*2; i+=2) {
       int16_t sample = I2S.read();
       if (sample) {
+        Serial.print(sample);
+        Serial.print(",");
         uint8_t lower = sample & 0xFF;
         uint8_t upper = (sample >> 8) & 0xFF;
         
