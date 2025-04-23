@@ -6,9 +6,9 @@ import os
 
 # Configuration parameters
 SAMPLE_RATE = 16000  # Default sample rate - adjust based on your Arduino configuration
-FILE_NAME = "recorded-data-2.txt"
+FILE_NAME = "data1.txt"
 
-def plot_pcm_data(file_path=FILE_NAME, sample_rate=SAMPLE_RATE, outlier_threshold=10.0):
+def plot_pcm_data(file_path=FILE_NAME, sample_rate=SAMPLE_RATE, outlier_threshold=1e18):
     try:
         # Check if file exists
         if not os.path.exists(file_path):
